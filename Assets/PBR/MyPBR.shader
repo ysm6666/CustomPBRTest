@@ -57,22 +57,13 @@ Shader "MyPBR/PBR"
             float4 frag(v2f input):SV_Target
             {
                 Light mainLight=GetMainLight();
-                mainLight.color*=PI;
+                CustomSurfaceData surfaceData;
+                surfaceData.albedo=_BaseColor;
+                surfaceData.metallic=_Metallic;
+                surfaceData.roughness=1-_Smoothness;
+                surfaceData.normalWS=input.normalWS;
                 float3 viewDirWS=normalize(GetCameraPositionWS()-input.positionWS);
-                float3 normalWS=normalize(input.normalWS);
-                float3 halfDirWS=normalize(viewDirWS+mainLight.direction);
-                float NdotV=max(dot(normalWS,viewDirWS),0);
-                float NdotL=max(dot(normalWS,mainLight.direction),0);
-                float VdotH=max(dot(viewDirWS,halfDirWS),0);
-                float NdotH=max(dot(normalWS,halfDirWS),0);
-                float roughness=1-_Smoothness;
-                float3 brdf_mainlighting=BRDF_MainLighting(_BaseColor.rgb,roughness,_Metallic,NdotL,NdotV,VdotH,NdotH);
-                
-               
-                float3 brdf_indirectlighting=BRDF_IndirectLighting(_BaseColor,normalWS,viewDirWS,_Metallic,roughness,NdotV);
-                
-                float3 finalColor=brdf_mainlighting*mainLight.color*NdotL+brdf_indirectlighting;
-                
+                float3 finalColor=CustomPBR(surfaceData,mainLight,viewDirWS);
                 return float4(finalColor,1);
             }
 
