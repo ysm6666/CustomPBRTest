@@ -1,0 +1,210 @@
+﻿#pragma kernel CSMainDiffuse
+#pragma kernel CSMainSpecular_Prefilter
+#pragma kernel CSMainSpecular_BakeBRDF
+#define PI 3.1415926
+
+TextureCube<float4> _Skybox;
+SamplerState sampler_PointClamp;
+
+RWStructuredBuffer<float4> _Result;
+
+int _Face;
+int _Resolution;
+int _SkyboxResolution;
+
+float3 DirectionFromCubemapTexel(int face,float2 uv)
+{
+    float3 dir=0;
+    switch (face)
+    {
+    case 0:
+        dir.x=1;
+        dir.yz=uv.yx*-2+1;
+        break;
+        
+    case 1:
+        dir.x=-1;
+        dir.y=uv.y*-2.0f+1.0f;
+        dir.z=uv.x*2-1;
+        break;
+    
+    case 2: //+Y
+        dir.xz = uv * 2.0f - 1.0f;
+        dir.y = 1.0f;
+        break;
+    case 3: //-Y
+        dir.x = uv.x * 2.0f - 1.0f;
+        dir.z = uv.y * -2.0f + 1.0f;
+        dir.y = -1.0f;
+        break;
+
+    case 4: //+Z
+        dir.x = uv.x * 2.0f - 1.0f;
+        dir.y = uv.y * -2.0f + 1.0f;
+        dir.z = 1;
+        break;
+
+    case 5: //-Z
+        dir.xy = uv * -2.0f + 1.0f;
+        dir.z = -1;
+        break;    
+    }
+    return normalize(dir);
+}
+
+[numthreads(8,8,1)]
+void CSMainDiffuse(uint3 id:SV_DispatchThreadID)
+{
+    float2 uv=(float2)id.xy/(float2)(_Resolution)+0.5/(float2)_Resolution;
+    uint index=id.y*_Resolution+id.x;
+    
+    float3 dir=DirectionFromCubemapTexel(_Face,uv);
+    float3 tangent=float3(0,1,0);
+    float upOrDown=dot(dir,tangent);
+    if (upOrDown==1)
+    {
+        tangent=float3(1,0,0);
+    }
+    else if (upOrDown==-1)
+    {
+        tangent=float3(-1,0,0);
+    }
+    else
+    {
+        tangent=normalize(cross(float3(0,1,0),dir));
+    }
+    float3 binormal=normalize(cross(dir,tangent));
+    float sampleDelta=0.0025;
+    int N1=0;
+    int N2=0;
+    float3 irradiance=float3(0,0,0);
+    
+    int n_total=(2*PI/sampleDelta)*(0.5*PI/sampleDelta);
+    float mip0_texel_size=4*PI/(6*_SkyboxResolution*_SkyboxResolution);
+    float sample_texel_size=2*PI/n_total;
+    float _MipLevel=0.5*log2(sample_texel_size/mip0_texel_size);
+
+    for (float phi = 0; phi < 2*PI; phi+=sampleDelta)
+    {
+        N2=0;
+        for (float theta = 0; theta < 0.5*PI; theta+=sampleDelta)
+        {
+            float3 lightDirTS = float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+            float3 lightDirWS = float3(dot(float3(tangent.x,binormal.x,dir.x),lightDirTS),dot(float3(tangent.y,binormal.y,dir.y),lightDirTS),dot(float3(tangent.z,binormal.z,dir.z),lightDirTS));
+            lightDirWS=normalize(lightDirWS);
+            irradiance += _Skybox.SampleLevel(sampler_PointClamp, lightDirWS, _MipLevel).rgb * cos(theta) * sin(theta);
+            N2++;
+        }
+        N1++;
+    }
+    irradiance*=PI/(N1*N2);
+    _Result[index]=float4(irradiance,1);
+}
+
+
+// -----------------------------------Bake Indirect Specular Roughness Mipmaps------------------------------
+float _FilterMapRoughness;
+float RadicalInverse_VdC(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+}
+//生成[0,1]均匀分布的随机数
+float2 Hammersley(uint i, uint N)
+{
+    return float2(float(i) / float(N), RadicalInverse_VdC(i));
+}
+
+
+float3 ImportanceSampleGGX(float2 xi,float3 n,float roughness)
+{
+    float a=roughness*roughness;
+    float phi=2*PI*xi.x;
+    float cosTheta=sqrt((1-xi.y)/(1+(a*a-1)*xi.y));
+    float sinTheta=sqrt(1-cosTheta*cosTheta);
+    
+    float3 H;
+    H.x=cos(phi)*sinTheta;
+    H.y=sin(phi)*sinTheta;
+    H.z=cosTheta;
+    
+    float3 up        = abs(n.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+    float3 tangent   = normalize(cross(up, n));
+    float3 bitangent = cross(n, tangent);
+
+    float3 sampleVec = tangent * H.x + bitangent * H.y + n * H.z;
+    return normalize(sampleVec);
+}
+
+[numthreads(1,1,1)]
+void CSMainSpecular_Prefilter(uint3 id :SV_DispatchThreadID)
+{
+    float2 uv =(float2)id.xy/(float2)(_Resolution)+0.5f/(float2)_Resolution;
+    uint index=id.y*_Resolution+id.x;
+    float3 dir=DirectionFromCubemapTexel(_Face,uv);
+    float3 n=dir;
+    float3 v,r;
+    v=n,r=n;
+    const uint SAMPLE_COUNT=1024;
+    float totalweight=0;
+    float3 prefilterColor=float3(0,0,0);
+    for (int i = 0; i < SAMPLE_COUNT; ++i)
+    {
+        float2 xi=Hammersley(i,SAMPLE_COUNT);
+        float3 H=ImportanceSampleGGX(xi,n,_FilterMapRoughness);
+        float3 L=normalize(2*dot(v,H)*H-v);
+        float NdotL=max(dot(n,L),0);
+        if (NdotL>0.0)
+        {
+            prefilterColor+=_Skybox.SampleLevel(sampler_PointClamp,L,0).rgb*NdotL;
+            totalweight+=NdotL;
+        }
+    }
+    prefilterColor=prefilterColor/totalweight;
+    _Result[index]=float4(prefilterColor.xyz,1.0);
+}
+
+//---------------------------------Bake LUT------------------------------
+
+float GeometryFunc_Schlick(float ndotv,float ndotl,float roughness)
+{
+    float a=roughness*roughness;
+    float k=a/2;
+    float g_ndotl=ndotl/(ndotl*(1-k)+k);
+    float g_ndotv=ndotv/(ndotv*(1-k)+k);
+    return g_ndotl*g_ndotv;
+}
+
+[numthreads(8,8,1)]
+void CSMainSpecular_BakeBRDF(uint3 id:SV_DispatchThreadID)
+{
+    float2 uv=(float2)id.xy/(float2)(_Resolution)+0.5/(float2)_Resolution;
+    uint index=id.y*_Resolution+id.x;
+    float ndotv=uv.x;
+    float roughness=uv.y;
+    float3 v=float3(sqrt(max(1-ndotv*ndotv,0)),0,ndotv);
+    float3 n=float3(0,0,1);
+    float A=0;
+    float B=0;
+    uint sampleCount=1024;
+    for (int i = 0; i < sampleCount; ++i)
+    {
+        float2 xi=Hammersley(i,sampleCount);
+        float3 h=ImportanceSampleGGX(xi,n,roughness);
+        float3 l=normalize(2*dot(v,h)*h-v);
+        float vdoth=max(dot(v,h),0);
+        float ndotl=max(dot(n,l),0);
+        float ndoth=max(0,dot(n,h));
+        float K=pow(1-vdoth,5);
+        float Wk=vdoth*GeometryFunc_Schlick(ndotv,ndotl,roughness)/max((ndotv*ndoth),1e-5);
+        A+=(1-K)*Wk;
+        B+=K*Wk;
+    }
+    A/=sampleCount;
+    B/=sampleCount;
+    _Result[index]=float4(A,B,0,1.0);
+}
