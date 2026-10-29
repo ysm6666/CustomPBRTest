@@ -8,6 +8,12 @@ Shader "SSS/SSSLit"
         _Metallic("Metallic",Range(0,1))=0.5
         _ScatterColor("Scatter Color (RGB shape)",Color)=(1, 0.35, 0.2, 1)
         _ScatterDistance("Scatter Distance (mm)",Range(0,500))=250
+        
+        [Header(Transmission Setting)]
+      
+        _ThicknessMap("Thickness Map",2D)="white"{}
+        _ThicknessScale("Thickness (mm)",Range(0,500))=50
+        _TransmissionTint("Transmission Tint",Color)=(1,1,1,1)
     }
 
     SubShader
@@ -26,6 +32,9 @@ Shader "SSS/SSSLit"
             float _Metallic;
             float4 _ScatterColor;
             float _ScatterDistance;
+            float _ThicknessScale;
+            float4 _TransmissionTint;
+            float _UseShadowThickness;
         CBUFFER_END
 
         TEXTURE2D(_BaseMap);
@@ -33,6 +42,9 @@ Shader "SSS/SSSLit"
         
         TEXTURE2D(_FilterRT);
         SAMPLER(sampler_FilterRT);
+        
+        TEXTURE2D(_ThicknessMap);
+        SAMPLER(sampler_ThicknessMap);
         ENDHLSL
 
         // 正常前向 Pass：只输出高光 + 环境反射，漫反射被抽走交给 SSS 流程
@@ -172,8 +184,17 @@ Shader "SSS/SSSLit"
                 float3 kd_ambient=(1-F_ambient)*(1-_Metallic);
                 float3 kd_mainlight=(1-F_mainlight)*(1-_Metallic);
                 half3 ambient = SampleSH(n);
+                
+                //transmission
+                float3 d=max(_ScatterColor.rgb*_ScatterDistance,1e-4);
+                float t=SAMPLE_TEXTURE2D(_ThicknessMap,sampler_ThicknessMap,i.uv).r*_ThicknessScale;
+               
+                float3 T = 0.25*exp(-t/d)+0.75*exp(-t/(3*d));
+                float backNdotL=saturate(dot(-n,mainLight.direction));
+                float3 transmission = mainLight.color*mainLight.distanceAttenuation*backNdotL*T*_TransmissionTint;
+                
                 fragOutput output;
-                output.diffuseColor = half4((diffuse*kd_mainlight+ambient*kd_ambient)*sqrt(albedo), 1);
+                output.diffuseColor = half4((diffuse*kd_mainlight+ambient*kd_ambient+transmission)*sqrt(albedo), 1);
                 output.sssParam=float4(_ScatterColor.rgb*_ScatterDistance,1);
                 return output;
             }

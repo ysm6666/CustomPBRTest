@@ -16,7 +16,7 @@ MonoBehaviour:
   settings:
     renderPassEvent: 250
     SSSFilterShader: {fileID: 4800000, guid: 214ffd9a60a17904086570bab022e211, type: 3}
-    MaxFilterSampleNum: 128
+    MaxFilterSampleNum: 64
     pixelNumPerSample: 4
 --- !u!114 &-1878332245247344467
 MonoBehaviour:
