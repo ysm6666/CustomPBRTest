@@ -73,13 +73,13 @@ Assets/PBR/
 
 ![SSS 兔子模型对比：后侧视角](Assets/SSS-TEST/Doc/Images/sss_bunny_20261105_143415.png)
 
-后侧视角：观察耳部红色透光表现，以及身体表面的明暗过渡。
+后侧视角：左侧为开启 AutoThick 的自定义 `SSS/SSSLit` 材质，右侧为 Unity URP 标准 Lit 材质。可对比耳部透光与身体明暗过渡。
 
 ![SSS 兔子模型对比：前侧视角](Assets/SSS-TEST/Doc/Images/sss_bunny_20261105_143325.png)
 
-前侧视角：观察表面高光、细节与整体光照表现。
+前侧视角：左侧为 Unity URP 标准 Lit 材质，右侧为开启 AutoThick 的自定义 `SSS/SSSLit` 材质。可对比表面高光、细节与整体光照表现。
 
-以上两张截图展示不同视角下的兔子模型对比；截图未标明左右模型的材质及 SSS 开关状态，因此不作对应标注。
+两种材质的金属度、粗糙度设置相同；两张图中的 SSS 材质均开启 AutoThick（自动厚度估计）。
 
 ### 球体材质对比
 
