@@ -18,6 +18,7 @@ MonoBehaviour:
     SSSFilterShader: {fileID: 4800000, guid: 214ffd9a60a17904086570bab022e211, type: 3}
     MaxFilterSampleNum: 64
     pixelNumPerSample: 4
+    AutoThick: 1
 --- !u!114 &-1878332245247344467
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -156,6 +157,7 @@ MonoBehaviour:
     SSSFilterShader: {fileID: 4800000, guid: 214ffd9a60a17904086570bab022e211, type: 3}
     MaxFilterSampleNum: 16
     pixelNumPerSample: 4
+    AutoThick: 0
 --- !u!114 &3179124341970427339
 MonoBehaviour:
   m_ObjectHideFlags: 0

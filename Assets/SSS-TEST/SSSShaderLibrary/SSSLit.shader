@@ -45,6 +45,14 @@ Shader "SSS/SSSLit"
         
         TEXTURE2D(_ThicknessMap);
         SAMPLER(sampler_ThicknessMap);
+        
+        //光源深度图声明
+        TEXTURE2D(_DepthLSRT);
+        SAMPLER(sampler_DepthLSRT);
+        float4x4 _SSSLightView;
+        float4x4 _SSSLightVP;
+        float4 _SSSLightDepthRange;
+        
         ENDHLSL
 
         // 正常前向 Pass：只输出高光 + 环境反射，漫反射被抽走交给 SSS 流程
@@ -59,7 +67,8 @@ Shader "SSS/SSSLit"
             #pragma fragment frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _SHADOWS_SOFT
-
+           
+            
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
             struct Attributes
@@ -120,7 +129,7 @@ Shader "SSS/SSSLit"
         {
             Name "SSSDiffuse"
             Tags { "LightMode" = "SSSDiffuse" }
-            ZWrite Off
+            ZWrite On
             ZTest LEqual
 
             HLSLPROGRAM
@@ -128,7 +137,9 @@ Shader "SSS/SSSLit"
             #pragma fragment frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _SHADOWS_SOFT
-
+             //添加一个autothick的关键字
+            #pragma multi_compile _ _SSS_AUTO_THICK
+            
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Assets/PBR/PBRLibrary/PBRLighting.hlsl"
 
@@ -187,7 +198,26 @@ Shader "SSS/SSSLit"
                 
                 //transmission
                 float3 d=max(_ScatterColor.rgb*_ScatterDistance,1e-4);
+                
+                //根据关键字选择采样厚度图还是光源深度图
+                
                 float t=SAMPLE_TEXTURE2D(_ThicknessMap,sampler_ThicknessMap,i.uv).r*_ThicknessScale;
+                #if defined(_SSS_AUTO_THICK)
+                float4 lightClip = mul(_SSSLightVP, float4(i.positionWS, 1));
+                float2 lightUV = lightClip.xy / lightClip.w * 0.5 + 0.5;
+                #if UNITY_UV_STARTS_AT_TOP
+                lightUV.y = 1.0 - lightUV.y;
+                #endif
+                float receiverDepth = -mul(_SSSLightView, float4(i.positionWS, 1)).z;
+                if (all(lightUV >= 0.0) && all(lightUV <= 1.0) &&
+                    receiverDepth >= _SSSLightDepthRange.x && receiverDepth <= _SSSLightDepthRange.y)
+                {
+                    float entryDepth = SAMPLE_TEXTURE2D_LOD(_DepthLSRT, sampler_DepthLSRT, lightUV, 0).r;
+                    if (entryDepth >= _SSSLightDepthRange.x && entryDepth <= _SSSLightDepthRange.y &&
+                        receiverDepth + _SSSLightDepthRange.z >= entryDepth)
+                        t = max(0.0, receiverDepth - entryDepth) * 1000.0;
+                }
+                #endif
                
                 float3 T = 0.25*exp(-t/d)+0.75*exp(-t/(3*d));
                 float backNdotL=saturate(dot(-n,mainLight.direction));
@@ -202,6 +232,42 @@ Shader "SSS/SSSLit"
         }
         
       
+
+        Pass
+        {
+            Name "SSSLightDepth"
+            Tags { "LightMode" = "SSSLightDepth" }
+            ZWrite On
+            ZTest LEqual
+            Cull Off
+            ColorMask R
+
+            HLSLPROGRAM
+            #pragma vertex vertLightDepth
+            #pragma fragment fragLightDepth
+
+            struct LightDepthAttributes { float4 positionOS : POSITION; };
+            struct LightDepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                float depthLS : TEXCOORD0;
+            };
+
+            LightDepthVaryings vertLightDepth(LightDepthAttributes v)
+            {
+                LightDepthVaryings o;
+                float3 positionWS = TransformObjectToWorld(v.positionOS.xyz);
+                o.positionCS = mul(_SSSLightVP, float4(positionWS, 1));
+                o.depthLS = -mul(_SSSLightView, float4(positionWS, 1)).z;
+                return o;
+            }
+
+            float fragLightDepth(LightDepthVaryings i) : SV_Target
+            {
+                return i.depthLS;
+            }
+            ENDHLSL
+        }
 
         Pass
         {
